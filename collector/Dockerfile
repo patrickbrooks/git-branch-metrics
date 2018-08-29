@@ -7,7 +7,7 @@ WORKDIR /root
 
 COPY git-branch-metrics-collector.py requirements.txt ./
 
-RUN apk add --no-cache bash bash-doc bash-completion less
+RUN apk add --no-cache git bash bash-doc bash-completion less
 # util-linux coreutils findutils grep groff
 
 # COPY requirements.txt ./
