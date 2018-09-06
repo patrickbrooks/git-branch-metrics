@@ -5,27 +5,27 @@
 docker version
 ```
 
-2. Look at the docker images on your system
+1. Build the Docker images
 ```
 docker images
-```
-
-3. Build the Docker image
-```
 docker build -t git-branch-collector .
-```
-
-4. See the new docker image on your system
-```
 docker images
 ```
 
-5. Start a container from the image.
+1. Create a persistent Docker volume to hold cloned repos
 ```
-docker run -it --mount type=bind,source='/Users/pb/Git',target='/root/Git' git-branch-collector
+docker volume ls
+docker volume create collector_repos
+docker volume ls
+docker volume inspect collector_repos
 ```
 
-6. For starters, run the script by hand
+1. Start a container from the image
+```
+docker run -it --mount src=collector_repos,dst=/root/repos git-branch-collector
+```
+
+1. At the bash prompt within the container, run the script by hand
 ```
 python git-branch-metrics-collector.py
 exit
@@ -36,6 +36,12 @@ exit
 
 During development, build the image as described above. Then, when running the image, mount the host's repo directory under the container's /root/dev directory using this command.
 ```
-docker run -it --mount type=bind,source='/Users/pb/Git/git-branch-metrics',target='/root/dev' --mount type=bind,source='/Users/pb/Git',target='/root/Git' git-branch-collector
+docker run -it \
+--mount type=bind,source='/Users/pb/Git/git-branch-metrics',target='/root/dev' \
+--mount src=collector_repos,dst=/root/repos \
+git-branch-collector
+
+cd /root/dev
+python git-branch-metrics-collector.py
+# save an edit to git-branch-metrics-collector.py, and execute the script again
 ```
-After you edit the file on the host, execute the updated script in the container's /root/dev directory.
