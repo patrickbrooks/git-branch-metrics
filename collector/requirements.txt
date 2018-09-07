@@ -1,5 +1,4 @@
 #
 # requirements.txt for git-branch-metrics-collector.py
 #
-# sh
-gitpython
+sh
