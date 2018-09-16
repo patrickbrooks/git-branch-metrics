@@ -14,7 +14,7 @@ import shutil
 import sys
 
 
-# Prepare a logger that prints the log level and the log message to stdout
+# Prepare a logger that prints to stdout
 log = logging.getLogger(__name__)
 stdout_handler = logging.StreamHandler(sys.stdout)
 stdout_handler.setFormatter(logging.Formatter('%(levelname)-8s %(message)s'))
@@ -62,8 +62,8 @@ def prepare_repo(repos_dir, repo_name, repo_url):
         clone_the_repo = True
     elif not os.path.isdir(dot_git_path):
         # If we find a directory in our mounted volume that is not a git
-        # repo, then something is seriously wrong. Burn it down and start
-        # with a clean repo.
+        # repo, then something is seriously wrong. Delete the directory and
+        # start again with a clean repo.
         log.warning(f"Deleting invalid git repo found at {repo_path}")
         shutil.rmtree(repo_path)
         clone_the_repo = True
@@ -101,16 +101,20 @@ def fetch_branches(name, repo_path):
     8772d940766815ff9cb8f7ca1b46d4a726dee75d	refs/tags/v1.5.0
     """
 
-    # prepare a dictionary that maps the branch name to the branch's commit ID
+    # prepare a dictionary that maps each branch name to the branch's commit ID
     heads_commits = {}
     for line in buf.getvalue().splitlines():
         fields = line.split()
 
-        # skip the HEAD entry
+        if len(fields) != 2:
+            log.warning("Unexpected number of fields in {line}. Skipping ...")
+            continue
+
+        # skip the HEAD entry because it is a duplicate of another entry
         if fields[-1] == 'HEAD':
             continue
 
-        # only store lines for branches (i.e. heads)
+        # only store lines for branches (i.e. heads) ... not tags
         if 'refs/heads' in fields[-1]:
             heads_commits[fields[-1]] = fields[0]
 
@@ -126,18 +130,17 @@ def fetch_branch_authors(branches, repo_path):
 
     print("    Branch authors:")
 
-    git = sh.git.bake(_cwd=repo_path)
+    git = sh.git.bake(_cwd=repo_path, _tty_out=False)
 
     for ref, commitId in branches.items():
         buf = StringIO()
-        git.log("-1", "--pretty=format:'%an'", commitId, _out=buf)
+        git.log("-1", "--pretty=format:%an", commitId, _out=buf)
         author = buf.getvalue()
         buf.close()
 
-        pprint(author)
-        # print(f"   {author}")
-        # print(f"       {ref} most recent author is" + author)
+        print(f"       {ref:30} most recent author is {author}")
 
+        log.warning("next try from sh import git")
 
 
 if __name__ == '__main__':
@@ -153,9 +156,12 @@ if __name__ == '__main__':
         log.error(f"A required volume ({repos_dir}) is missing. Exiting.")
         exit()
 
+    # for now, hardcode some public repos. Later, pull these from configuration
+    # file or table
     repos_list = {
         'gitBranchTestRepo': 'https://gitlab.com/patrickbrooks/gitBranchTestRepo.git',
-        'keyrunner':         'https://gitlab.com/rustushki/keyrunner'
+        'keyrunner':         'https://gitlab.com/rustushki/keyrunner',
+        'flask':             'https://github.com/pallets/flask.git'
     }
 
     for name in repos_list.keys():
