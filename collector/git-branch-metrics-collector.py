@@ -6,6 +6,7 @@ git-branch-metrics-collector.py
 
 import argparse
 import collections
+import datetime
 from io import StringIO
 import logging
 import os
@@ -282,13 +283,14 @@ def fetch_merged_branches(branches, base_branch, repo_path):
 
 if __name__ == '__main__':
 
-    print("\nExecuting git-branch-metrics-collector.py ...")
+
+    print(f"\nExecuting git-branch-metrics-collector.py at {datetime.datetime.now()} ...")
 
     args = parse_cmd_line()
     log.debug(args)
 
     # This Docker volume holds the repositories cloned by this script.
-    repos_dir = '/home/gbu/repos'
+    repos_dir = '/root/repos'
     if not os.path.isdir(repos_dir):
         log.error(f"A required volume ({repos_dir}) is missing. Exiting.")
         exit()
@@ -322,4 +324,4 @@ if __name__ == '__main__':
 
             fetch_merged_branches(branches, repos_list[name]['base_branch'], repo_path)
 
-    print("\nDone\n")
+    print(f"\nDone at {datetime.datetime.now()} \n")
