@@ -5,11 +5,12 @@ git-branch-metrics-collector.py
 
 
 import argparse
+import collections
 from io import StringIO
 import logging
 import os
 from pprint import pprint
-import sh
+from sh import git
 import shutil
 import sys
 
@@ -74,12 +75,12 @@ def prepare_repo(repos_dir, repo_name, repo_url):
     if clone_the_repo:
         log.info(f"Cloning {repo_name} ...")
         os.chdir(repos_dir)
-        sh.git.clone(repo_url)
+        git.clone(repo_url)
     else:
         # The git repo exists, so bring it up to date
         log.info(f"Fetching changes to {repo_name}")
         os.chdir(repo_path)
-        sh.git.fetch('--all')
+        git.fetch('--all')
 
     return repo_path
 
@@ -88,7 +89,7 @@ def fetch_branches(name, repo_path):
     log.info(f"Fetching branches for {name}")
 
     buf = StringIO()
-    sh.git("ls-remote", _out=buf, _cwd=repo_path)
+    git("ls-remote", _out=buf, _cwd=repo_path)
 
     """
     Output of ls-remote looks like:
@@ -107,7 +108,7 @@ def fetch_branches(name, repo_path):
         fields = line.split()
 
         if len(fields) != 2:
-            log.warning("Unexpected number of fields in {line}. Skipping ...")
+            log.warning(f"Unexpected number of fields in {line}. Skipping ...")
             continue
 
         # skip the HEAD entry because it is a duplicate of another entry
@@ -116,12 +117,13 @@ def fetch_branches(name, repo_path):
 
         # only store lines for branches (i.e. heads) ... not tags
         if 'refs/heads' in fields[-1]:
-            heads_commits[fields[-1]] = fields[0]
+            head_name = fields[-1].replace('refs/heads/', '')
+            heads_commits[head_name] = fields[0]
 
     buf.close()
 
     for k in heads_commits.keys():
-        log.debug(f"ref {k:40} is commit {heads_commits[k]}")
+        log.debug(f"ref {k:20} is commit {heads_commits[k]}")
 
     return heads_commits
 
@@ -130,17 +132,152 @@ def fetch_branch_authors(branches, repo_path):
 
     print("    Branch authors:")
 
-    git = sh.git.bake(_cwd=repo_path, _tty_out=False)
+    gitsh = git.bake(_cwd=repo_path, _tty_out=False)
 
     for ref, commitId in branches.items():
         buf = StringIO()
-        git.log("-1", "--pretty=format:%an", commitId, _out=buf)
+        gitsh.log("-1", "--pretty=format:%an", commitId, _out=buf)
         author = buf.getvalue()
         buf.close()
 
-        print(f"       {ref:30} most recent author is {author}")
+        print(f"        {ref:20} most recent author is {author}")
 
-        log.warning("next try from sh import git")
+
+def base_branch_exists(base_branch, branches, name):
+
+    rc = False
+
+    if base_branch in branches:
+        log.info(f"        {base_branch} exists in {name} repo")
+        rc = True
+    else:
+        log.warning(f"        {base_branch} does not exist in {name} repo.")
+
+    return rc
+
+
+def fetch_first_commit_id(branch, base_branch, commitId):
+    """
+    From https://stackoverflow.com/questions/18407526/git-how-to-find-first-commit-of-specific-branch/32870852#32870852
+
+    A-B-C-D-E (base_branch)
+         \
+          F-G-H (branch)
+
+    We are looking for commit F.
+
+    git log base_branch..branch --oneline | tail -1
+
+    "dot-dot gives you all of the commits that the branch has that base_branch
+    doesn't have." These commits are listed in reverse topological order, so
+    the last one in the list is the first commit on the branch.
+
+    The downside of this approach is that we must specify the base_branch
+    from which 'branch' was branched. Ideally, base_branch wouldn't be
+    required.
+
+    This technique is good enough to start. Other options exist if this doesn't
+    hold up.
+    """
+
+    first_commit_id = None
+
+    buf = StringIO()
+    gitsh = git.bake(_cwd=repo_path, _tty_out=False)
+    gitsh.log(f"{base_branch}..{commitId}", "--format=%h %s", _out=buf)
+    """ Output looks like:
+    $ git log master..20180905-foo --oneline
+    124e842 2nd commit on 20180905-foo
+    cdb7133 1st commit on 20180905-foo
+    """
+
+    lines = buf.getvalue().splitlines()
+    if len(lines) <= 0:
+        log.debug(f"Found no commits on {branch} that are not on {base_branch}")
+    else:
+        # The first commit on the branch is listed last in the output, so index
+        # the output by [-1] to find it.
+        # Split the line into only 2 parts: the commitId and the commit subject.
+        fields = lines[-1].split(' ', 1)
+        if len(fields) < 2:
+            log.warning(f"Unexpected number of fields = {len(fields)}. Skipping...")
+        else:
+            log.debug(f"First commit on {branch} is {fields[0]} w/ subject '{fields[1]}'")
+            first_commit_id = fields[0]
+
+    buf.close()
+
+    return first_commit_id
+
+
+def fetch_commit_date(commit_id, repo_path):
+
+    commit_date = None
+
+    buf = StringIO()
+    gitsh = git.bake(_cwd=repo_path, _tty_out=False)
+    gitsh.log("-n 1", "--format=%ci", commit_id, _out=buf)
+    lines = buf.getvalue().splitlines()
+    if len(lines) != 1:
+        log.warning(f"Unexpected git log output: {lines}. Skipping ...")
+    else:
+        log.debug(f"First commit was created at {lines[0]}")
+        commit_date = lines[0]
+
+    return commit_date
+
+
+def fetch_branch_ages(branches, base_branch, repo_path):
+
+    print("    Branch ages:")
+
+    for branch, commitId in branches.items():
+
+        if branch == base_branch:
+            # skip when master == master, for example
+            log.debug(f"Skipping {branch} == {base_branch}")
+            continue
+
+        # Find the first commit on branch that does not exist on base_branch. We
+        # will use the date of this commit (if it exists) as the branch
+        # creation date
+        first_branch_commit = fetch_first_commit_id(branch, base_branch, commitId)
+
+        # Now use the commitId to find the commit date
+        if first_branch_commit:
+            branch_date = fetch_commit_date(first_branch_commit, repo_path)
+            print(f"        {branch:20} created on {branch_date}")
+        else:
+            print(f"        No commits on {branch} that are not on {base_branch}")
+
+
+def fetch_merged_branches(branches, base_branch, repo_path):
+
+    print(f"    Branches merged into {base_branch}:")
+    merged_branch_count = 0
+
+    gitsh = git.bake(_cwd=repo_path, _tty_out=False)
+
+    for branch, commitId in branches.items():
+
+        # skip when master == master, for example
+        if branch == base_branch:
+            log.debug(f"Skipping {branch} == {base_branch}")
+            continue
+
+        buf = StringIO()
+        gitsh.branch("-a", "--contains", commitId, _out=buf)
+        lines = buf.getvalue()
+        buf.close()
+
+        if base_branch in lines:
+            print(f"        {branch:20} has been merged into {base_branch}")
+            merged_branch_count += 1
+        else:
+            log.debug(f"        {branch:20} has not yet been merged into {base_branch}")
+
+    if merged_branch_count == 0:
+        print(f"        No merged branches found")
 
 
 if __name__ == '__main__':
@@ -151,30 +288,38 @@ if __name__ == '__main__':
     log.debug(args)
 
     # This Docker volume holds the repositories cloned by this script.
-    repos_dir = '/root/repos'
+    repos_dir = '/home/gbu/repos'
     if not os.path.isdir(repos_dir):
         log.error(f"A required volume ({repos_dir}) is missing. Exiting.")
         exit()
 
     # for now, hardcode some public repos. Later, pull these from configuration
-    # file or table
-    repos_list = {
-        'gitBranchTestRepo': 'https://gitlab.com/patrickbrooks/gitBranchTestRepo.git',
-        'keyrunner':         'https://gitlab.com/rustushki/keyrunner',
-        'flask':             'https://github.com/pallets/flask.git'
-    }
+    # file or database table
+    repos_list = collections.defaultdict(dict)
+    repos_list['gitBranchTestRepo']['url'] = 'https://gitlab.com/patrickbrooks/gitBranchTestRepo.git'
+    repos_list['gitBranchTestRepo']['base_branch'] = 'master'
+    repos_list['keyrunner']['url'] = 'https://gitlab.com/rustushki/keyrunner'
+    repos_list['keyrunner']['base_branch'] = 'master'
+    repos_list['flask']['url'] = 'https://github.com/pallets/flask.git'
+    repos_list['flask']['base_branch'] = 'develop'
+    repos_list['cpython']['url'] = 'https://github.com/python/cpython.git'
+    repos_list['cpython']['base_branch'] = 'develop'
 
     for name in repos_list.keys():
         print(f"\nFor repo {name} :")
 
-        repo_path = prepare_repo(repos_dir, name, repos_list[name])
+        repo_path = prepare_repo(repos_dir, name, repos_list[name]['url'])
 
         branches = fetch_branches(name, repo_path)
-
         print(f"    Branch count = {len(branches)}")
 
         fetch_branch_authors(branches, repo_path)
 
+        if not base_branch_exists(repos_list[name]['base_branch'], branches, name):
+            print(f"\n        Skipping determination of branch ages and merged branches.")
+        else:
+            fetch_branch_ages(branches, repos_list[name]['base_branch'], repo_path)
 
+            fetch_merged_branches(branches, repos_list[name]['base_branch'], repo_path)
 
     print("\nDone\n")

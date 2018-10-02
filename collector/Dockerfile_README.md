@@ -22,7 +22,7 @@ docker volume inspect collector_repos
 
 1. Start a container from the image
 ```
-docker run -it --mount src=collector_repos,dst=/root/repos git-branch-collector
+docker run -it --mount src=collector_repos,dst=/home/gbu/repos git-branch-collector
 ```
 
 1. At the bash prompt within the container, run the script by hand
@@ -37,11 +37,11 @@ exit
 During development, build the image as described above. Then, when running the image, mount the host's repo directory under the container's /root/dev directory using this command.
 ```
 docker run -it \
---mount type=bind,source='/Users/pb/Git/git-branch-metrics',target='/root/dev' \
---mount src=collector_repos,dst=/root/repos \
+--mount type=bind,source='/Users/pb/Git/git-branch-metrics',target='/home/gbu/dev' \
+--mount src=collector_repos,dst=/home/gbu/repos \
 git-branch-collector
 
-cd /root/dev
+cd /home/gbu/dev
 python git-branch-metrics-collector.py
 # save an edit to git-branch-metrics-collector.py, and execute the script again
 ```
